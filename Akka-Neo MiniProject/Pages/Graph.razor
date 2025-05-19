@@ -1,1 +1,321 @@
-﻿
+﻿@page "/graph"
+@using AkkaNeo_Blazor.Models
+@using AkkaNeo_Blazor.Services
+@inject Neo4jService Neo4jService
+@inject IJSRuntime JSRuntime
+
+<h3>Neo4j Graph Visualization</h3>
+
+<div class="row mb-3">
+    <div class="col">
+        <button class="btn btn-primary" @onclick="LoadGraphData">Refresh Graph</button>
+        <button class="btn btn-success ml-2" @onclick="ShowAddNodeModal">Add Node</button>
+        <button class="btn btn-info ml-2" @onclick="ShowAddRelationshipModal" disabled="@(nodes.Count < 2)">Add Relationship</button>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-8">
+        <div id="graph-container" style="height: 600px; border: 1px solid #ddd; background-color: #f8f9fa;"></div>
+    </div>
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-header">
+                Selected Element Info
+            </div>
+            <div class="card-body">
+                @if (selectedNode != null)
+                {
+                    <h5>Node: @selectedNode.Label</h5>
+                    <p>ID: @selectedNode.Id</p>
+                    <h6>Properties:</h6>
+                    <ul>
+                        @foreach (var prop in selectedNode.Properties)
+                        {
+                            <li>@prop.Key: @prop.Value</li>
+                        }
+                    </ul>
+                    <button class="btn btn-sm btn-warning" @onclick="() => DeleteNode(selectedNode.Id)">Delete</button>
+                }
+                else if (selectedRelationship != null)
+                {
+                    <h5>Relationship: @selectedRelationship.Type</h5>
+                    <p>From: @GetNodeLabel(selectedRelationship.SourceNodeId)</p>
+                    <p>To: @GetNodeLabel(selectedRelationship.TargetNodeId)</p>
+                    <h6>Properties:</h6>
+                    <ul>
+                        @foreach (var prop in selectedRelationship.Properties)
+                        {
+                            <li>@prop.Key: @prop.Value</li>
+                        }
+                    </ul>
+                    <button class="btn btn-sm btn-warning" @onclick="() => DeleteRelationship(selectedRelationship.Id)">Delete</button>
+                }
+                else
+                {
+                    <p>Click on a node or relationship to see details</p>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+@if (showAddNodeModal)
+{
+    <div class="modal fade show" style="display: block;" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Add New Node</h5>
+                    <button type="button" class="close" @onclick="CloseModals">
+                        <span>&times;</span>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label>Label:</label>
+                        <input type="text" class="form-control" @bind="newNode.Label" />
+                    </div>
+                    <div class="form-group">
+                        <label>Property Key:</label>
+                        <input type="text" class="form-control" @bind="newPropertyKey" />
+                    </div>
+                    <div class="form-group">
+                        <label>Property Value:</label>
+                        <input type="text" class="form-control" @bind="newPropertyValue" />
+                    </div>
+                    <button class="btn btn-sm btn-info" @onclick="AddProperty">Add Property</button>
+
+                    @if (newNode.Properties.Any())
+                    {
+                        <h6 class="mt-3">Properties:</h6>
+                        <ul>
+                            @foreach (var prop in newNode.Properties)
+                            {
+                                <li>
+                                    @prop.Key: @prop.Value
+                                    <button class="btn btn-sm btn-link text-danger" @onclick="() => RemoveProperty(prop.Key)">Remove</button>
+                                </li>
+                            }
+                        </ul>
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" @onclick="CloseModals">Cancel</button>
+                    <button type="button" class="btn btn-primary" @onclick="CreateNode">Create Node</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="modal-backdrop fade show"></div>
+}
+
+@if (showAddRelationshipModal)
+{
+    <div class="modal fade show" style="display: block;" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Add New Relationship</h5>
+                    <button type="button" class="close" @onclick="CloseModals">
+                        <span>&times;</span>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label>Type:</label>
+                        <input type="text" class="form-control" @bind="newRelationship.Type" />
+                    </div>
+                    <div class="form-group">
+                        <label>Source Node:</label>
+                        <select class="form-control" @bind="newRelationship.SourceNodeId">
+                            <option value="">Select Source Node</option>
+                            @foreach (var node in nodes)
+                            {
+                                <option value="@node.Id">@node.Label</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Target Node:</label>
+                        <select class="form-control" @bind="newRelationship.TargetNodeId">
+                            <option value="">Select Target Node</option>
+                            @foreach (var node in nodes)
+                            {
+                                <option value="@node.Id">@node.Label</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Property Key:</label>
+                        <input type="text" class="form-control" @bind="newPropertyKey" />
+                    </div>
+                    <div class="form-group">
+                        <label>Property Value:</label>
+                        <input type="text" class="form-control" @bind="newPropertyValue" />
+                    </div>
+                    <button class="btn btn-sm btn-info" @onclick="AddProperty">Add Property</button>
+
+                    @if (newRelationship.Properties.Any())
+                    {
+                        <h6 class="mt-3">Properties:</h6>
+                        <ul>
+                            @foreach (var prop in newRelationship.Properties)
+                            {
+                                <li>
+                                    @prop.Key: @prop.Value
+                                    <button class="btn btn-sm btn-link text-danger" @onclick="() => RemoveProperty(prop.Key)">Remove</button>
+                                </li>
+                            }
+                        </ul>
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" @onclick="CloseModals">Cancel</button>
+                    <button type="button" class="btn btn-primary" @onclick="CreateRelationship">Create Relationship</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="modal-backdrop fade show"></div>
+}
+
+@code {
+    private List<GraphNode> nodes = new();
+    private List<GraphRelationship> relationships = new();
+    private GraphNode? selectedNode;
+    private GraphRelationship? selectedRelationship;
+
+    // For modal forms
+    private bool showAddNodeModal = false;
+    private bool showAddRelationshipModal = false;
+    private GraphNode newNode = new();
+    private GraphRelationship newRelationship = new();
+    private string newPropertyKey = string.Empty;
+    private string newPropertyValue = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadGraphData();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await RenderGraphAsync();
+        }
+    }
+
+    private async Task LoadGraphData()
+    {
+        nodes = await Neo4jService.GetAllNodesAsync();
+        relationships = await Neo4jService.GetAllRelationshipsAsync();
+        selectedNode = null;
+        selectedRelationship = null;
+        await RenderGraphAsync();
+    }
+
+    private async Task RenderGraphAsync()
+    {
+        // This would use cytoscape.js or similar graph visualization library
+        // For now, we'll just mock this with JSRuntime
+        await JSRuntime.InvokeVoidAsync("console.log", "Rendering graph with:", nodes.Count, "nodes and", relationships.Count, "relationships");
+    }
+
+    private void ShowAddNodeModal()
+    {
+        newNode = new GraphNode();
+        newPropertyKey = string.Empty;
+        newPropertyValue = string.Empty;
+        showAddNodeModal = true;
+        showAddRelationshipModal = false;
+    }
+
+    private void ShowAddRelationshipModal()
+    {
+        newRelationship = new GraphRelationship();
+        newPropertyKey = string.Empty;
+        newPropertyValue = string.Empty;
+        showAddRelationshipModal = true;
+        showAddNodeModal = false;
+    }
+
+    private void CloseModals()
+    {
+        showAddNodeModal = false;
+        showAddRelationshipModal = false;
+    }
+
+    private void AddProperty()
+    {
+        if (!string.IsNullOrWhiteSpace(newPropertyKey))
+        {
+            if (showAddNodeModal)
+            {
+                newNode.Properties[newPropertyKey] = newPropertyValue;
+            }
+            else if (showAddRelationshipModal)
+            {
+                newRelationship.Properties[newPropertyKey] = newPropertyValue;
+            }
+
+            newPropertyKey = string.Empty;
+            newPropertyValue = string.Empty;
+        }
+    }
+
+    private void RemoveProperty(string key)
+    {
+        if (showAddNodeModal)
+        {
+            newNode.Properties.Remove(key);
+        }
+        else if (showAddRelationshipModal)
+        {
+            newRelationship.Properties.Remove(key);
+        }
+    }
+
+    private async Task CreateNode()
+    {
+        if (!string.IsNullOrWhiteSpace(newNode.Label))
+        {
+            await Neo4jService.CreateNodeAsync(newNode);
+            await LoadGraphData();
+            CloseModals();
+        }
+    }
+
+    private async Task CreateRelationship()
+    {
+        if (!string.IsNullOrWhiteSpace(newRelationship.Type) &&
+            !string.IsNullOrWhiteSpace(newRelationship.SourceNodeId) &&
+            !string.IsNullOrWhiteSpace(newRelationship.TargetNodeId))
+        {
+            await Neo4jService.CreateRelationshipAsync(newRelationship);
+            await LoadGraphData();
+            CloseModals();
+        }
+    }
+
+    private async Task DeleteNode(string nodeId)
+    {
+        // Would add delete functionality to Neo4jService
+        // For now, just refresh
+        await LoadGraphData();
+    }
+
+    private async Task DeleteRelationship(string relationshipId)
+    {
+        // Would add delete functionality to Neo4jService
+        // For now, just refresh
+        await LoadGraphData();
+    }
+
+    private string GetNodeLabel(string nodeId)
+    {
+        var node = nodes.FirstOrDefault(n => n.Id == nodeId);
+        return node?.Label ?? "Unknown";
+    }
+}

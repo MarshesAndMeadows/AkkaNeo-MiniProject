@@ -6,4 +6,15 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <ItemGroup>
+    <PackageReference Include="Akka" Version="1.5.41" />
+    <PackageReference Include="Akka.DependencyInjection" Version="1.5.41" />
+    <PackageReference Include="Neo4j.Driver" Version="5.28.1" />
+    <PackageReference Include="Neo4jClient" Version="5.1.20" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Akka-Neo MiniProject\AkkaNeo Blazor.csproj" />
+  </ItemGroup>
+
 </Project>

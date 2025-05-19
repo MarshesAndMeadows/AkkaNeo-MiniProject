@@ -1,1 +1,1026 @@
-﻿
+﻿@page "/agents"
+@using AkkaNeo_Blazor.Models
+@using AkkaNeo_Blazor.Services
+@inject AkkaService AkkaService
+@inject Neo4jService Neo4jService
+@inject ILogger<Agents> Logger
+@implements IDisposable
+
+<h3>Akka Agents Management</h3>
+
+<div class="row mb-3">
+    <div class="col">
+        <button class="btn btn-primary" @onclick="LoadAgents">Refresh Agents</button>
+        <button class="btn btn-success ml-2" @onclick="ShowCreateAgentModal">Create Agent</button>
+        <button class="btn btn-info ml-2" @onclick="ShowSystemDiagram">View System Diagram</button>
+    </div>
+</div>
+
+@if (isLoading)
+{
+    <div class="d-flex justify-content-center my-4">
+        <div class="spinner-border text-primary" role="status">
+            <span class="sr-only">Loading...</span>
+        </div>
+    </div>
+}
+else
+{
+    <div class="row">
+        <div class="col">
+            @if (agents.Count == 0)
+            {
+                <div class="alert alert-info">No agents found. Create one to get started.</div>
+            }
+
+    private async Task StartAgent(string agentId)
+    {
+        try
+        {
+            await AkkaService.StartAgentAsync(agentId);
+            
+            // Update Neo4j status property if available
+            var agent = agents.FirstOrDefault(a => a.Id == agentId);
+            if (agent != null && !string.IsNullOrEmpty(agent.Neo4jNodeId))
+            {
+                await Neo4jService.UpdateNodePropertyAsync(
+                    long.Parse(agent.Neo4jNodeId), 
+                    "status", 
+                    "Active"
+                );
+            }
+            
+            await LoadAgents();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, $"Error starting agent {agentId}");
+        }
+    }
+
+    private async Task StopAgent(string agentId)
+    {
+        try
+        {
+            await AkkaService.StopAgentAsync(agentId);
+            
+            // Update Neo4j status property if available
+            var agent = agents.FirstOrDefault(a => a.Id == agentId);
+            if (agent != null && !string.IsNullOrEmpty(agent.Neo4jNodeId))
+            {
+                await Neo4jService.UpdateNodePropertyAsync(
+                    long.Parse(agent.Neo4jNodeId), 
+                    "status", 
+                    "Inactive"
+                );
+            }
+            
+            await LoadAgents();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, $"Error stopping agent {agentId}");
+        }
+    }
+
+    private async Task DeleteAgent(string agentId)
+    {
+        if (selectedAgent == null) return;
+        
+        try
+        {
+            // Stop the agent first if it's active
+            if (selectedAgent.Status == "Active")
+            {
+                await AkkaService.StopAgentAsync(selectedAgent.Id);
+            }
+            
+            // Delete from Akka
+            await AkkaService.DeleteAgentAsync(selectedAgent.Id);
+            
+            // Delete from Neo4j if requested and node exists
+            if (deleteNeo4jNode && !string.IsNullOrEmpty(selectedAgent.Neo4jNodeId))
+            {
+                await Neo4jService.DeleteNodeAsync(long.Parse(selectedAgent.Neo4jNodeId));
+            }
+            
+            await LoadAgents();
+            CloseModals();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, $"Error deleting agent {agentId}");
+        }
+    }
+
+    private async Task SendMessage()
+    {
+        if (selectedAgent == null || !newMessage.Content.Any()) return;
+        
+        try
+        {
+            // Add timestamp if not set
+            if (newMessage.Timestamp == default)
+            {
+                newMessage.Timestamp = DateTime.Now;
+            }
+            
+            // Send the message via Akka service
+            await AkkaService.SendMessageToAgentAsync(selectedAgent.Id, newMessage);
+            
+            // Optionally log message in Neo4j if integrated
+            if (!string.IsNullOrEmpty(selectedAgent.Neo4jNodeId))
+            {
+                // Create a message node and relationship
+                await Neo4jService.CreateMessageNodeAsync(
+                    newMessage.SenderId,
+                    selectedAgent.Id,
+                    newMessage.MessageType,
+                    newMessage.Content
+                );
+            }
+            
+            CloseModals();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, $"Error sending message to agent {selectedAgent.Id}");
+        }
+    }
+    
+    // Helper class for Neo4j relationships
+    private class AgentRelationship
+    {
+        public string SourceId { get; set; } = string.Empty;
+        public string SourceName { get; set; } = string.Empty;
+        public string TargetId { get; set; } = string.Empty;
+        public string TargetName { get; set; } = string.Empty;
+        public string Type { get; set; } = string.Empty;
+    }
+}
+            else
+            {
+                <table class="table table-striped">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Type</th>
+                            <th>Status</th>
+                            <th>Messages</th>
+                            <th>Last Active</th>
+                            <th>Neo4j Node ID</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var agent in agents)
+                        {
+                            <tr>
+                                <td>@agent.Name</td>
+                                <td>@agent.Type</td>
+                                <td>
+                                    <span class="badge @GetStatusBadgeClass(agent.Status)">
+                                        @agent.Status
+                                    </span>
+                                </td>
+                                <td>@agent.MessagesProcessed</td>
+                                <td>@(agent.LastActiveAt?.ToString("g") ?? "Never")</td>
+                                <td>@agent.Neo4jNodeId</td>
+                                <td>
+                                    @if (agent.Status == "Active")
+                                    {
+                                        <button class="btn btn-sm btn-warning" @onclick="() => StopAgent(agent.Id)">Stop</button>
+                                    }
+                                    else
+                                    {
+                                        <button class="btn btn-sm btn-success" @onclick="() => StartAgent(agent.Id)">Start</button>
+                                    }
+                                    <button class="btn btn-sm btn-info ml-2" @onclick="() => ShowSendMessageModal(agent)">Message</button>
+                                    <button class="btn btn-sm btn-secondary ml-2" @onclick="() => ShowAgentDetails(agent)">Details</button>
+                                    <button class="btn btn-sm btn-danger ml-2" @onclick="() => ConfirmDeleteAgent(agent)">Delete</button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </div>
+    </div>
+
+    @if (selectedAgent != null && showAgentDetails)
+    {
+        <div class="row mt-4">
+            <div class="col">
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">Agent Details: @selectedAgent.Name</h5>
+                        <button type="button" class="close" @onclick="() => showAgentDetails = false">
+                            <span>&times;</span>
+                        </button>
+                    </div>
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-6">
+                                <h6>Properties:</h6>
+                                @if (!selectedAgent.Properties.Any())
+                                {
+                                    <p>No properties defined</p>
+                                }
+                                else
+                                {
+                                    <table class="table table-sm">
+                                        <thead>
+                                            <tr>
+                                                <th>Key</th>
+                                                <th>Value</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            @foreach (var prop in selectedAgent.Properties)
+                                            {
+                                                <tr>
+                                                    <td>@prop.Key</td>
+                                                    <td>@prop.Value</td>
+                                                </tr>
+                                            }
+                                        </tbody>
+                                    </table>
+                                }
+                            </div>
+                            <div class="col-md-6">
+                                <h6>Recent Messages:</h6>
+                                @if (agentMessages.Count == 0)
+                                {
+                                    <p>No recent messages</p>
+                                }
+                                else
+                                {
+                                    <table class="table table-sm">
+                                        <thead>
+                                            <tr>
+                                                <th>Type</th>
+                                                <th>Sender</th>
+                                                <th>Time</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            @foreach (var msg in agentMessages)
+                                            {
+                                                <tr>
+                                                    <td>@msg.MessageType</td>
+                                                    <td>@msg.SenderId</td>
+                                                    <td>@msg.Timestamp.ToString("g")</td>
+                                                </tr>
+                                            }
+                                        </tbody>
+                                    </table>
+                                }
+                            </div>
+                        </div>
+                        <div class="row mt-3">
+                            <div class="col">
+                                <h6>Neo4j Relationships:</h6>
+                                @if (agentRelationships.Count == 0)
+                                {
+                                    <p>No relationships found</p>
+                                }
+                                else
+                                {
+                                    <table class="table table-sm">
+                                        <thead>
+                                            <tr>
+                                                <th>Relationship</th>
+                                                <th>Target Agent</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            @foreach (var rel in agentRelationships)
+                                            {
+                                                <tr>
+                                                    <td>@rel.Type</td>
+                                                    <td>@rel.TargetName</td>
+                                                </tr>
+                                            }
+                                        </tbody>
+                                    </table>
+                                }
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+}
+
+@if (showCreateAgentModal)
+{
+    <div class="modal fade show" style="display: block;" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Create New Agent</h5>
+                    <button type="button" class="close" @onclick="CloseModals">
+                        <span>&times;</span>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <div class="row">
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label>Name:</label>
+                                <input type="text" class="form-control" @bind="newAgent.Name" />
+                                @if (validationErrors.ContainsKey("Name"))
+                                {
+                                    <small class="text-danger">@validationErrors["Name"]</small>
+                                }
+                            </div>
+                            <div class="form-group">
+                                <label>Type:</label>
+                                <select class="form-control" @bind="newAgent.Type">
+                                    <option value="Processor">Processor</option>
+                                    <option value="Collector">Collector</option>
+                                    <option value="Analyzer">Analyzer</option>
+                                    <option value="Reporter">Reporter</option>
+                                    <option value="Aggregator">Aggregator</option>
+                                    <option value="Custom">Custom</option>
+                                </select>
+                            </div>
+                            @if (newAgent.Type == "Custom")
+                            {
+                                <div class="form-group">
+                                    <label>Custom Type:</label>
+                                    <input type="text" class="form-control" @bind="customAgentType" />
+                                </div>
+                            }
+                            <div class="form-group">
+                                <label>Status:</label>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="checkbox" @bind="autoStart" id="autoStart" />
+                                    <label class="form-check-label" for="autoStart">
+                                        Start agent immediately after creation
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="form-group">
+                                <label>Supervision Strategy:</label>
+                                <select class="form-control" @bind="newAgent.SupervisionStrategy">
+                                    <option value="OneForOne">OneForOne</option>
+                                    <option value="AllForOne">AllForOne</option>
+                                    <option value="Custom">Custom</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Max Restart Count:</label>
+                                <input type="number" class="form-control" @bind="newAgent.MaxRestartCount" min="0" />
+                            </div>
+                            <div class="form-group">
+                                <label>Timeout (seconds):</label>
+                                <input type="number" class="form-control" @bind="newAgent.TimeoutSeconds" min="1" />
+                            </div>
+                        </div>
+                    </div>
+
+                    <hr />
+                    <h6>Agent Properties</h6>
+                    <div class="row">
+                        <div class="col-md-5">
+                            <div class="form-group">
+                                <label>Property Key:</label>
+                                <input type="text" class="form-control" @bind="newPropertyKey" />
+                            </div>
+                        </div>
+                        <div class="col-md-5">
+                            <div class="form-group">
+                                <label>Property Value:</label>
+                                <input type="text" class="form-control" @bind="newPropertyValue" />
+                            </div>
+                        </div>
+                        <div class="col-md-2">
+                            <div class="form-group">
+                                <label>&nbsp;</label>
+                                <button class="btn btn-sm btn-info form-control" @onclick="AddProperty">Add Property</button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    @if (newAgent.Properties.Any())
+                    {
+                        <div class="table-responsive mt-2">
+                            <table class="table table-sm table-bordered">
+                                <thead>
+                                    <tr>
+                                        <th>Key</th>
+                                        <th>Value</th>
+                                        <th>Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var prop in newAgent.Properties)
+                                    {
+                                        <tr>
+                                            <td>@prop.Key</td>
+                                            <td>@prop.Value</td>
+                                            <td>
+                                                <button class="btn btn-sm btn-danger" @onclick="() => RemoveProperty(prop.Key)">Remove</button>
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+
+                    <hr />
+                    <h6>Neo4j Configuration</h6>
+                    <div class="form-group">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" @bind="createNeo4jNode" id="createNeo4jNode" />
+                            <label class="form-check-label" for="createNeo4jNode">
+                                Create corresponding Neo4j node
+                            </label>
+                        </div>
+                    </div>
+
+                    @if (createNeo4jNode)
+                    {
+                        <div class="row">
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label>Neo4j Labels (comma separated):</label>
+                                    <input type="text" class="form-control" @bind="neo4jLabels" placeholder="e.g. Agent,Processor" />
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="form-group">
+                                    <label>Relate to Existing Agent:</label>
+                                    <select class="form-control" @bind="relatedAgentId">
+                                        <option value="">None</option>
+                                        @foreach (var agent in agents)
+                                        {
+                                            <option value="@agent.Id">@agent.Name</option>
+                                        }
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+
+                        @if (!string.IsNullOrEmpty(relatedAgentId))
+                        {
+                            <div class="form-group">
+                                <label>Relationship Type:</label>
+                                <select class="form-control" @bind="relationshipType">
+                                    <option value="COMMUNICATES_WITH">COMMUNICATES_WITH</option>
+                                    <option value="DEPENDS_ON">DEPENDS_ON</option>
+                                    <option value="SUPERVISES">SUPERVISES</option>
+                                    <option value="REPORTS_TO">REPORTS_TO</option>
+                                    <option value="CUSTOM">Custom...</option>
+                                </select>
+                            </div>
+
+                            @if (relationshipType == "CUSTOM")
+                            {
+                                <div class="form-group">
+                                    <label>Custom Relationship Type:</label>
+                                    <input type="text" class="form-control" @bind="customRelationshipType" placeholder="e.g. PROCESSES_DATA_FOR" />
+                                </div>
+                            }
+                        }
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" @onclick="CloseModals">Cancel</button>
+                    <button type="button" class="btn btn-primary" @onclick="CreateAgent">Create Agent</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="modal-backdrop fade show"></div>
+}
+
+@if (showSendMessageModal)
+{
+    <div class="modal fade show" style="display: block;" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Send Message to @selectedAgent?.Name</h5>
+                    <button type="button" class="close" @onclick="CloseModals">
+                        <span>&times;</span>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label>Message Type:</label>
+                        <select class="form-control" @bind="newMessage.MessageType">
+                            <option value="Command">Command</option>
+                            <option value="Query">Query</option>
+                            <option value="Notification">Notification</option>
+                            <option value="Event">Event</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Priority:</label>
+                        <select class="form-control" @bind="newMessage.Priority">
+                            <option value="Low">Low</option>
+                            <option value="Normal">Normal</option>
+                            <option value="High">High</option>
+                            <option value="Critical">Critical</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Content Key:</label>
+                        <input type="text" class="form-control" @bind="newPropertyKey" />
+                    </div>
+                    <div class="form-group">
+                        <label>Content Value:</label>
+                        <input type="text" class="form-control" @bind="newPropertyValue" />
+                    </div>
+                    <button class="btn btn-sm btn-info" @onclick="AddMessageContent">Add Content</button>
+                    
+                    @if (newMessage.Content.Any())
+                    {
+                        <h6 class="mt-3">Message Content:</h6>
+                        <div class="table-responsive">
+                            <table class="table table-sm">
+                                <thead>
+                                    <tr>
+                                        <th>Key</th>
+                                        <th>Value</th>
+                                        <th>Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @foreach (var content in newMessage.Content)
+                                    {
+                                        <tr>
+                                            <td>@content.Key</td>
+                                            <td>@content.Value</td>
+                                            <td>
+                                                <button class="btn btn-sm btn-danger" @onclick="() => RemoveMessageContent(content.Key)">Remove</button>
+                                            </td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" @onclick="CloseModals">Cancel</button>
+                    <button type="button" class="btn btn-primary" @onclick="SendMessage">Send Message</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="modal-backdrop fade show"></div>
+}
+
+@if (showDeleteConfirmation)
+{
+    <div class="modal fade show" style="display: block;" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Confirm Delete</h5>
+                    <button type="button" class="close" @onclick="CloseModals">
+                        <span>&times;</span>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    <p>Are you sure you want to delete agent "@selectedAgent?.Name"?</p>
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" @bind="deleteNeo4jNode" id="deleteNeo4jNode" />
+                        <label class="form-check-label" for="deleteNeo4jNode">
+                            Also delete corresponding Neo4j node
+                        </label>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" @onclick="CloseModals">Cancel</button>
+                    <button type="button" class="btn btn-danger" @onclick="DeleteAgent">Delete Agent</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="modal-backdrop fade show"></div>
+}
+
+@if (showSystemDiagram)
+{
+    <div class="modal fade show" style="display: block;" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">System Diagram</h5>
+                    <button type="button" class="close" @onclick="CloseModals">
+                        <span>&times;</span>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    @if (isLoadingDiagram)
+                    {
+                        <div class="d-flex justify-content-center">
+                            <div class="spinner-border text-primary" role="status">
+                                <span class="sr-only">Loading...</span>
+                            </div>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="agent-diagram">
+                            <!-- Neo4j visualization or diagram would go here -->
+                            <div class="alert alert-info">
+                                Displaying graph with @agents.Count agents and @systemRelationships.Count relationships.
+                                <!-- In a real implementation, this would be replaced with an actual visualization -->
+                            </div>
+                            <!-- Simplified diagram representation -->
+                            <div class="agents-network">
+                                @foreach (var agent in agents)
+                                {
+                                    <div class="agent-node @GetAgentNodeClass(agent.Status)">
+                                        <strong>@agent.Name</strong>
+                                        <div>@agent.Type</div>
+                                    </div>
+                                }
+                                <!-- In a real implementation, relationship lines would be drawn here -->
+                            </div>
+                        </div>
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" @onclick="CloseModals">Close</button>
+                    <button type="button" class="btn btn-primary" @onclick="RefreshSystemDiagram">Refresh</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="modal-backdrop fade show"></div>
+}
+
+<style>
+    .agents-network {
+        position: relative;
+        height: 400px;
+        border: 1px solid #ddd;
+        background-color: #f8f9fa;
+        overflow: hidden;
+        padding: 20px;
+    }
+    
+    .agent-node {
+        display: inline-block;
+        padding: 10px;
+        margin: 10px;
+        border-radius: 5px;
+        min-width: 120px;
+        text-align: center;
+    }
+    
+    .agent-active {
+        background-color: #d4edda;
+        border: 1px solid #c3e6cb;
+    }
+    
+    .agent-inactive {
+        background-color: #f8d7da;
+        border: 1px solid #f5c6cb;
+    }
+    
+    .agent-pending {
+        background-color: #fff3cd;
+        border: 1px solid #ffeeba;
+    }
+</style>
+
+@code {
+    private List<AgentInfo> agents = new();
+    private System.Threading.Timer? refreshTimer;
+    private bool isLoading = true;
+    private bool isLoadingDiagram = false;
+    
+    // For modal forms
+    private bool showCreateAgentModal = false;
+    private bool showSendMessageModal = false;
+    private bool showDeleteConfirmation = false;
+    private bool showAgentDetails = false;
+    private bool showSystemDiagram = false;
+    
+    private AgentInfo newAgent = new();
+    private AgentInfo? selectedAgent;
+    private AgentMessage newMessage = new();
+    
+    private string newPropertyKey = string.Empty;
+    private string newPropertyValue = string.Empty;
+    private string customAgentType = string.Empty;
+    private bool autoStart = true;
+    private Dictionary<string, string> validationErrors = new();
+    
+    // Neo4j integration
+    private bool createNeo4jNode = true;
+    private string neo4jLabels = "Agent";
+    private string relatedAgentId = string.Empty;
+    private string relationshipType = "COMMUNICATES_WITH";
+    private string customRelationshipType = string.Empty;
+    private bool deleteNeo4jNode = true;
+    private List<AgentRelationship> agentRelationships = new();
+    private List<AgentRelationship> systemRelationships = new();
+    
+    // Agent details
+    private List<AgentMessage> agentMessages = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            await LoadAgents();
+        }
+        finally
+        {
+            isLoading = false;
+        }
+        
+        // Set up a timer to refresh agents status every 10 seconds
+        refreshTimer = new System.Threading.Timer(async _ =>
+        {
+            await LoadAgents();
+            await InvokeAsync(StateHasChanged);
+        }, null, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10));
+    }
+
+    public void Dispose()
+    {
+        refreshTimer?.Dispose();
+    }
+
+    private async Task LoadAgents()
+    {
+        try
+        {
+            agents = await AkkaService.GetAllAgentsAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading agents");
+        }
+    }
+
+    private string GetStatusBadgeClass(string status)
+    {
+        return status switch
+        {
+            "Active" => "badge-success",
+            "Inactive" => "badge-secondary",
+            "Error" => "badge-danger",
+            "Restarting" => "badge-warning",
+            "Pending" => "badge-info",
+            _ => "badge-light"
+        };
+    }
+    
+    private string GetAgentNodeClass(string status)
+    {
+        return status switch
+        {
+            "Active" => "agent-active",
+            "Inactive" => "agent-inactive",
+            _ => "agent-pending"
+        };
+    }
+
+    private void ShowCreateAgentModal()
+    {
+        newAgent = new AgentInfo
+        {
+            MaxRestartCount = 3,
+            TimeoutSeconds = 30,
+            SupervisionStrategy = "OneForOne",
+            Properties = new Dictionary<string, string>()
+        };
+        newPropertyKey = string.Empty;
+        newPropertyValue = string.Empty;
+        customAgentType = string.Empty;
+        validationErrors.Clear();
+        showCreateAgentModal = true;
+        CloseOtherModals("create");
+    }
+
+    private void ShowSendMessageModal(AgentInfo agent)
+    {
+        selectedAgent = agent;
+        newMessage = new AgentMessage
+        {
+            SenderId = "client",
+            ReceiverId = agent.Id,
+            MessageType = "Command",
+            Priority = "Normal",
+            Content = new Dictionary<string, string>(),
+            Timestamp = DateTime.Now
+        };
+        newPropertyKey = string.Empty;
+        newPropertyValue = string.Empty;
+        showSendMessageModal = true;
+        CloseOtherModals("message");
+    }
+
+    private async Task ShowAgentDetails(AgentInfo agent)
+    {
+        selectedAgent = agent;
+        showAgentDetails = true;
+        
+        try
+        {
+            // Load agent relationships from Neo4j
+            agentRelationships = await Neo4jService.GetAgentRelationshipsAsync(agent.Id);
+            
+            // Load recent messages for this agent
+            agentMessages = await AkkaService.GetRecentMessagesAsync(agent.Id, 10);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading agent details");
+        }
+        
+        CloseOtherModals("details");
+    }
+
+    private void ConfirmDeleteAgent(AgentInfo agent)
+    {
+        selectedAgent = agent;
+        deleteNeo4jNode = true;
+        showDeleteConfirmation = true;
+        CloseOtherModals("delete");
+    }
+
+    private async Task ShowSystemDiagram()
+    {
+        showSystemDiagram = true;
+        CloseOtherModals("diagram");
+        
+        try
+        {
+            isLoadingDiagram = true;
+            // Load all relationships from Neo4j for visualization
+            systemRelationships = await Neo4jService.GetAllRelationshipsAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading system diagram");
+        }
+        finally
+        {
+            isLoadingDiagram = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task RefreshSystemDiagram()
+    {
+        try
+        {
+            isLoadingDiagram = true;
+            systemRelationships = await Neo4jService.GetAllRelationshipsAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error refreshing system diagram");
+        }
+        finally
+        {
+            isLoadingDiagram = false;
+        }
+    }
+
+    private void CloseOtherModals(string current)
+    {
+        if (current != "create") showCreateAgentModal = false;
+        if (current != "message") showSendMessageModal = false;
+        if (current != "delete") showDeleteConfirmation = false;
+        if (current != "diagram") showSystemDiagram = false;
+    }
+
+    private void CloseModals()
+    {
+        showCreateAgentModal = false;
+        showSendMessageModal = false;
+        showDeleteConfirmation = false;
+        showSystemDiagram = false;
+    }
+
+    private void AddProperty()
+    {
+        if (!string.IsNullOrWhiteSpace(newPropertyKey))
+        {
+            newAgent.Properties[newPropertyKey] = newPropertyValue;
+            newPropertyKey = string.Empty;
+            newPropertyValue = string.Empty;
+        }
+    }
+
+    private void RemoveProperty(string key)
+    {
+        newAgent.Properties.Remove(key);
+    }
+
+    private void AddMessageContent()
+    {
+        if (!string.IsNullOrWhiteSpace(newPropertyKey))
+        {
+            newMessage.Content[newPropertyKey] = newPropertyValue;
+            newPropertyKey = string.Empty;
+            newPropertyValue = string.Empty;
+        }
+    }
+
+    private void RemoveMessageContent(string key)
+    {
+        newMessage.Content.Remove(key);
+    }
+
+    private bool ValidateAgent()
+    {
+        validationErrors.Clear();
+        
+        if (string.IsNullOrWhiteSpace(newAgent.Name))
+        {
+            validationErrors["Name"] = "Agent name is required";
+        }
+        
+        if (newAgent.Type == "Custom" && string.IsNullOrWhiteSpace(customAgentType))
+        {
+            validationErrors["Type"] = "Custom agent type is required";
+        }
+        
+        return validationErrors.Count == 0;
+    }
+
+    private async Task CreateAgent()
+    {
+        if (!ValidateAgent())
+        {
+            return;
+        }
+        
+        // Set actual type if custom was selected
+        if (newAgent.Type == "Custom" && !string.IsNullOrWhiteSpace(customAgentType))
+        {
+            newAgent.Type = customAgentType;
+        }
+        
+        // Set status based on auto-start preference
+        newAgent.Status = autoStart ? "Active" : "Inactive";
+        
+        try
+        {
+            // Create the agent in Akka
+            string agentId = await AkkaService.CreateAgentAsync(newAgent);
+            
+            // If Neo4j integration is enabled, create the node there too
+            if (createNeo4jNode && !string.IsNullOrEmpty(agentId))
+            {
+                // Extract labels from comma-separated string
+                var labels = neo4jLabels.Split(',', StringSplitOptions.RemoveEmptyEntries)
+                    .Select(l => l.Trim())
+                    .ToList();
+                
+                // Add base Agent label if not specified
+                if (!labels.Contains("Agent", StringComparer.OrdinalIgnoreCase))
+                {
+                    labels.Add("Agent");
+                }
+                
+                // Create node in Neo4j
+                long nodeId = await Neo4jService.CreateAgentNodeAsync(agentId, newAgent.Name, newAgent.Type, labels, newAgent.Properties);
+                
+                // Create relationship if specified
+                if (!string.IsNullOrEmpty(relatedAgentId))
+                {
+                    string actualRelType = relationshipType;
+                    if (relationshipType == "CUSTOM" && !string.IsNullOrEmpty(customRelationshipType))
+                    {
+                        actualRelType = customRelationshipType.ToUpperInvariant();
+                    }
+                    
+                    await Neo4jService.CreateRelationshipAsync(agentId, relatedAgentId, actualRelType);
+                }
+                
+                // Update the agent with Neo4j node ID
+                await AkkaService.UpdateAgentPropertyAsync(agentId, "Neo4jNodeId", nodeId.ToString());
+            }
+            
+            // Start the agent if auto-start is selected
+            if (autoStart)
+            {
+                await AkkaService.StartAgentAsync(agentId);
+            }
+            
+            await LoadAgents();
+            CloseModals();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error creating agent");
+            validationErrors["General"] = $"Error creating agent: {ex.Message}";
+        }

@@ -1,7 +1,128 @@
 ﻿@page "/"
+@using AkkaNeo_Blazor.Services
+@inject Neo4jService Neo4jService
+@inject NavigationManager NavigationManager
 
-<PageTitle>Index</PageTitle>
+<h1>Neo4j-Akka Agent Dashboard</h1>
 
-<h1>Hello, world!</h1>
+<div class="row mt-4">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                Graph Database Status
+            </div>
+            <div class="card-body">
+                <p>Database Status: @(isDatabaseConnected ? "Connected" : "Disconnected")</p>
+                <p>Total Nodes: @totalNodes</p>
+                <p>Total Relationships: @totalRelationships</p>
+                <button class="btn btn-primary" @onclick="CheckDatabaseStatus">Refresh Status</button>
+                <button class="btn btn-secondary ml-2" @onclick="NavigateToGraphView">View Graph</button>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                Akka Agent Status
+            </div>
+            <div class="card-body">
+                <p>Active Agents: @activeAgents</p>
+                <p>Messages Processed: @messagesProcessed</p>
+                <button class="btn btn-primary" @onclick="CheckAgentStatus">Refresh Status</button>
+                <button class="btn btn-secondary ml-2" @onclick="NavigateToAgentsView">Manage Agents</button>
+            </div>
+        </div>
+    </div>
+</div>
 
-Welcome to your new app.
+<div class="row mt-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                Quick Actions
+            </div>
+            <div class="card-body">
+                <button class="btn btn-success" @onclick="CreateSampleData">Create Sample Data</button>
+                <button class="btn btn-warning ml-2" @onclick="TriggerAgentAction">Trigger Agent Action</button>
+                <button class="btn btn-danger ml-2" @onclick="ClearDatabase">Clear Database</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private bool isDatabaseConnected = false;
+    private int totalNodes = 0;
+    private int totalRelationships = 0;
+    private int activeAgents = 0;
+    private int messagesProcessed = 0;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await CheckDatabaseStatus();
+        await CheckAgentStatus();
+    }
+
+    private async Task CheckDatabaseStatus()
+    {
+        try
+        {
+            var status = await Neo4jService.GetDatabaseStatusAsync();
+            isDatabaseConnected = status.IsConnected;
+            totalNodes = status.NodeCount;
+            totalRelationships = status.RelationshipCount;
+        }
+        catch (Exception)
+        {
+            isDatabaseConnected = false;
+        }
+    }
+
+    private async Task CheckAgentStatus()
+    {
+        try
+        {
+            // This would connect to your backend API
+            // Just simulating for now
+            await Task.Delay(100);
+            activeAgents = 5;
+            messagesProcessed = 42;
+        }
+        catch (Exception)
+        {
+            activeAgents = 0;
+            messagesProcessed = 0;
+        }
+    }
+
+    private async Task CreateSampleData()
+    {
+        await Neo4jService.CreateSampleDataAsync();
+        await CheckDatabaseStatus();
+    }
+
+    private async Task TriggerAgentAction()
+    {
+        // This would trigger an Akka agent action
+        // Just simulating for now
+        await Task.Delay(100);
+        messagesProcessed += 1;
+        StateHasChanged();
+    }
+
+    private async Task ClearDatabase()
+    {
+        await Neo4jService.ClearDatabaseAsync();
+        await CheckDatabaseStatus();
+    }
+
+    private void NavigateToGraphView()
+    {
+        NavigationManager.NavigateTo("/graph");
+    }
+
+    private void NavigateToAgentsView()
+    {
+        NavigationManager.NavigateTo("/agents");
+    }
+}
